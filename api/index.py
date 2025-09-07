@@ -4,7 +4,7 @@ import time
 import random
 import re
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus, urlparse, urlunparse
+from urllib.parse import quote_plus, urlparse
 from fake_useragent import UserAgent
 from flask_cors import CORS
 import concurrent.futures
@@ -15,9 +15,9 @@ CORS(app)
 
 # Payment gateway patterns
 gateways = [
-    r'Stripe', r'PayPal', r'Braintree', r'tradesafe', r'Razorpay', r'AWS', r'AVS',
-    r'eway', r'Authorize\\.Net', r'2Checkout', r'Mollie', r'Google Pay', r'Checkout\\.com',
-    r'BlueSnap', r'Adyen', r'woocommerce', r'authorize_net_cim_credit_card'
+    'Stripe', 'PayPal', 'Braintree', 'tradesafe', 'Razorpay', 
+    'Authorize.Net', '2Checkout', 'Mollie', 'Google Pay', 
+    'Checkout.com', 'BlueSnap', 'Adyen', 'woocommerce'
 ]
 
 # Global lock for thread-safe operations
@@ -29,10 +29,7 @@ class DorkSearchTool:
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
         ]
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': random.choice(self.user_agents)})
     
     def get_random_agent(self):
         return random.choice(self.user_agents)
@@ -41,16 +38,16 @@ class DorkSearchTool:
         """Check if URL has protection like CAPTCHA"""
         try:
             headers = {'User-Agent': self.get_random_agent()}
-            res = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+            res = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
             content = res.text.lower()
-            return any(x in content for x in ['captcha', 'cf-chl-bypass', 'cloudflare', 'security check'])
+            return any(x in content for x in ['captcha', 'cloudflare', 'security check', 'firewall'])
         except:
-            return True
+            return False
     
-    def search_google(self, query, pages=3):
-        """Search using Google"""
+    def search_google(self, query, pages=2):
+        """Search using Google with improved parsing"""
         results = []
-        for page in range(0, pages):
+        for page in range(pages):
             try:
                 start = page * 10
                 url = f"https://www.google.com/search?q={quote_plus(query)}&start={start}"
@@ -59,22 +56,19 @@ class DorkSearchTool:
                 response = requests.get(url, headers=headers, timeout=15)
                 
                 if response.status_code != 200:
-                    print(f"Google search returned status {response.status_code}")
                     continue
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Find all search result links
-                for g in soup.find_all('div', class_='g'):
-                    a = g.find('a')
-                    if a and a.has_attr('href'):
-                        href = a['href']
-                        if href.startswith('/url?q='):
-                            url = href.split('/url?q=')[1].split('&')[0]
-                            if urlparse(url).netloc and url not in results:
-                                results.append(url)
+                # Find all links in search results
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('/url?q='):
+                        link = href.split('/url?q=')[1].split('&')[0]
+                        if urlparse(link).netloc and link not in results:
+                            results.append(link)
                 
-                time.sleep(random.uniform(2, 3))
+                time.sleep(random.uniform(1, 2))
                 
             except Exception as e:
                 print(f"Google search error: {e}")
@@ -82,7 +76,7 @@ class DorkSearchTool:
         
         return results
     
-    def search_bing(self, query, pages=3):
+    def search_bing(self, query, pages=2):
         """Search using Bing"""
         results = []
         for page in range(1, pages + 1):
@@ -93,18 +87,19 @@ class DorkSearchTool:
                 response = requests.get(url, headers=headers, timeout=15)
                 
                 if response.status_code != 200:
-                    print(f"Bing search returned status {response.status_code}")
                     continue
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Find search result links
-                for link in soup.find_all('a', href=True):
-                    href = link['href']
-                    if href.startswith('http') and 'bing.com' not in href and href not in results:
-                        results.append(href)
+                # Find organic results
+                for li in soup.find_all('li', class_='b_algo'):
+                    a = li.find('a')
+                    if a and a.has_attr('href'):
+                        href = a['href']
+                        if href.startswith('http') and 'bing.com' not in href and href not in results:
+                            results.append(href)
                 
-                time.sleep(random.uniform(2, 3))
+                time.sleep(random.uniform(1, 2))
                 
             except Exception as e:
                 print(f"Bing search error: {e}")
@@ -112,75 +107,33 @@ class DorkSearchTool:
         
         return results
     
-    def search_duckduckgo(self, query, pages=3):
-        """Search using DuckDuckGo"""
-        results = []
-        for page in range(1, pages + 1):
-            try:
-                url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&s={(page-1)*30}"
-                
-                headers = {'User-Agent': self.get_random_agent()}
-                response = requests.get(url, headers=headers, timeout=15)
-                
-                if response.status_code != 200:
-                    print(f"DuckDuckGo search returned status {response.status_code}")
-                    continue
-                
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Find result links
-                for link in soup.find_all('a', class_='result__url'):
-                    href = link.get('href')
-                    if href and href.startswith('http') and href not in results:
-                        results.append(href)
-                
-                time.sleep(random.uniform(1, 2))
-                
-            except Exception as e:
-                print(f"DuckDuckGo search error: {e}")
-                continue
-        
-        return results
-    
-    def search_all_engines(self, query, pages=3):
+    def search_all_engines(self, query, pages=2):
         """Search using all available engines"""
         all_results = []
         
         print(f"Searching for: {query}")
         
-        # Use threading to search multiple engines concurrently
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_google = executor.submit(self.search_google, query, pages)
-            future_bing = executor.submit(self.search_bing, query, pages)
-            future_ddg = executor.submit(self.search_duckduckgo, query, pages)
-            
-            try:
-                google_results = future_google.result(timeout=30)
-                all_results.extend(google_results)
-                print(f"Google found {len(google_results)} results")
-            except Exception as e:
-                print(f"Google search failed: {e}")
-            
-            try:
-                bing_results = future_bing.result(timeout=30)
-                all_results.extend(bing_results)
-                print(f"Bing found {len(bing_results)} results")
-            except Exception as e:
-                print(f"Bing search failed: {e}")
-            
-            try:
-                ddg_results = future_ddg.result(timeout=30)
-                all_results.extend(ddg_results)
-                print(f"DuckDuckGo found {len(ddg_results)} results")
-            except Exception as e:
-                print(f"DuckDuckGo search failed: {e}")
+        # Search both engines
+        try:
+            google_results = self.search_google(query, pages)
+            all_results.extend(google_results)
+            print(f"Google found {len(google_results)} results")
+        except Exception as e:
+            print(f"Google search failed: {e}")
+        
+        try:
+            bing_results = self.search_bing(query, pages)
+            all_results.extend(bing_results)
+            print(f"Bing found {len(bing_results)} results")
+        except Exception as e:
+            print(f"Bing search failed: {e}")
         
         # Remove duplicates
         unique_results = list(set(all_results))
         print(f"Total unique results: {len(unique_results)}")
         return unique_results
     
-    def filter_valid_results(self, results, max_results=20):
+    def filter_valid_results(self, results, max_results=15):
         """Filter results by checking protection and validity"""
         valid_results = []
         
@@ -188,33 +141,55 @@ class DorkSearchTool:
             if len(valid_results) >= max_results:
                 break
                 
-            if not self.check_protection(url):
-                valid_results.append(url)
-                print(f"Found valid URL: {url}")
+            try:
+                # Skip URLs that are clearly not stores
+                if any(x in url for x in ['google.', 'bing.', 'youtube.', 'facebook.']):
+                    continue
+                    
+                if not self.check_protection(url):
+                    valid_results.append(url)
+                    print(f"Found valid URL: {url}")
+            except:
+                continue
             
-            time.sleep(0.5)  # Be polite
+            time.sleep(0.3)
         
         return valid_results
 
-def is_real_store(soup):
+def is_real_store(soup, text):
     """Check if the website appears to be a real e-commerce store"""
-    store_keywords = ['cart', 'add to cart', 'product', 'shop', 'store', 'buy now', 'checkout', 'shopping', 'price', '$']
-    if soup:
-        content = soup.get_text().lower()
-        # Check for multiple indicators to reduce false positives
-        indicators = sum(1 for word in store_keywords if word in content)
-        return indicators >= 3  # At least 3 indicators
-    return False
+    store_indicators = [
+        'cart', 'add to cart', 'product', 'shop', 'store', 
+        'buy now', 'checkout', 'shopping', 'price', '$', '€', '£',
+        'add to basket', 'shopping cart', 'add to bag'
+    ]
+    
+    if not soup:
+        return False
+    
+    content = text.lower()
+    
+    # Check for multiple e-commerce indicators
+    indicators_found = sum(1 for indicator in store_indicators if indicator in content)
+    
+    # Also check for common e-commerce HTML elements
+    ecommerce_elements = soup.find_all(['form', 'button', 'input'], {
+        'type': ['submit', 'button'],
+        'value': lambda x: x and any(word in x.lower() for word in ['add', 'buy', 'cart', 'checkout'])
+    })
+    
+    return indicators_found >= 2 or len(ecommerce_elements) > 0
 
 def find_gateways(text):
     """Find payment gateways mentioned in the text"""
     found = set()
     text_lower = text.lower()
     
-    for g in gateways:
-        pattern = re.compile(r'\b' + re.escape(g.lower().replace('\\.', '.')) + r'\b', re.IGNORECASE)
-        if pattern.search(text_lower):
-            found.add(g.replace('\\.', '.').replace('\\', ''))
+    for gateway in gateways:
+        gateway_lower = gateway.lower()
+        # Simple string search for better matching
+        if gateway_lower in text_lower:
+            found.add(gateway)
     
     # Additional checks for common payment indicators
     payment_indicators = [
@@ -222,8 +197,9 @@ def find_gateways(text):
         ('debit card', 'Debit Card'),
         ('visa', 'Visa'),
         ('mastercard', 'MasterCard'),
-        ('american express', 'American Express'),
-        ('payment method', 'Payment Method')
+        ('amex', 'American Express'),
+        ('payment method', 'Payment Method'),
+        ('checkout', 'Checkout')
     ]
     
     for indicator, name in payment_indicators:
@@ -232,11 +208,12 @@ def find_gateways(text):
     
     return found
 
-def analyze_store(url, ua):
+def analyze_store(url):
     """Analyze a single store"""
     try:
+        ua = UserAgent()
         headers = {'User-Agent': ua.random}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
             return None
@@ -245,37 +222,24 @@ def analyze_store(url, ua):
         text = response.text
         
         # Check if it's a real store
-        if not is_real_store(soup):
+        if not is_real_store(soup, text):
             return None
         
         # Check for various features
         captcha = 'captcha' in text.lower()
         cloudflare = 'cloudflare' in text.lower() or 'cf-ray' in response.headers
-        vbv = bool(re.search(r'3D[\s\-]?Secure|VBV|threeD[\s\-]?SecureInfo', text, re.I))
-        
-        # Check for authentication pages
-        auth_paths = ['/my-account', '/login', '/signin', '/register', '/signup']
-        is_auth = any(check_path_exists(url, path, ua) for path in auth_paths)
+        vbv = bool(re.search(r'3d[\s\-]?secure|vbv', text, re.I))
         
         # Find payment gateways
         gateways_found = find_gateways(text)
         
-        # Check checkout pages for additional gateway info
-        checkout_pages = ['/checkout', '/payment', '/pay', '/cart']
-        for path in checkout_pages:
-            try:
-                checkout_url = url.rstrip('/') + path
-                res2 = requests.get(checkout_url, headers={'User-Agent': ua.random}, timeout=8)
-                gateways_found.update(find_gateways(res2.text))
-                if re.search(r'3D[\s\-]?Secure|VBV', res2.text, re.I):
-                    vbv = True
-            except:
-                continue
+        # Check for authentication
+        is_auth = any(x in text.lower() for x in ['login', 'signin', 'register', 'account', 'my-account'])
         
         return {
             'url': url,
             'real_store': True,
-            'gateways': list(gateways_found) if gateways_found else [],
+            'gateways': list(gateways_found),
             'gateways_count': len(gateways_found),
             'cloudflare': cloudflare,
             'auth': is_auth,
@@ -286,15 +250,6 @@ def analyze_store(url, ua):
     except Exception as e:
         print(f"Error analyzing {url}: {e}")
         return None
-
-def check_path_exists(base_url, path, user_agent):
-    """Check if a specific path exists on the website"""
-    full_url = base_url.rstrip('/') + path
-    try:
-        res = requests.get(full_url, headers={'User-Agent': user_agent.random}, timeout=8)
-        return res.status_code == 200
-    except:
-        return False
 
 @app.route('/analyze', methods=['GET'])
 def analyze_single_store():
@@ -311,8 +266,7 @@ def analyze_single_store():
         url = "https://" + url
     
     try:
-        ua = UserAgent()
-        result = analyze_store(url, ua)
+        result = analyze_store(url)
         
         if not result:
             return jsonify({
@@ -332,30 +286,27 @@ def analyze_single_store():
 def find_ecommerce_stores():
     """API endpoint to find e-commerce stores and analyze them"""
     try:
-        # Get query parameters with reasonable defaults
-        pages = int(request.args.get('pages', 3))
-        max_results = int(request.args.get('max_results', 20))
-        gateways_count = int(request.args.get('gateways_count', 1))
+        # Get query parameters
+        pages = int(request.args.get('pages', 2))
+        max_results = int(request.args.get('max_results', 10))
+        gateways_count = int(request.args.get('gateways_count', 0))  # 0 means any
         
-        # Limit parameters to prevent abuse
-        pages = min(pages, 5)
-        max_results = min(max_results, 50)
-        
-        # Create search queries for e-commerce stores
+        # More effective e-commerce search queries
         ecommerce_queries = [
-            'site:shop.com "add to cart"',
-            'site:store.com "buy now"',
-            '"online shop" "products"',
-            '"ecommerce store" "checkout"',
-            '"clothing store" "shop now"',
-            '"electronics store" "add to cart"'
+            '"add to cart" "buy now"',
+            '"online store" "products"',
+            '"shop now" "free shipping"',
+            '"ecommerce" "checkout"',
+            '"buy" "price" "shopping"',
+            '"clothing store" "online shop"',
+            '"electronics" "add to cart"'
         ]
         
         tool = DorkSearchTool()
         all_valid_results = []
         
-        # Search for each query
-        for query in ecommerce_queries[:2]:  # Limit to 2 queries for performance
+        # Search with multiple queries
+        for query in ecommerce_queries[:3]:  # Use first 3 queries
             print(f"Searching for: {query}")
             results = tool.search_all_engines(query, pages)
             valid_results = tool.filter_valid_results(results, max_results)
@@ -366,24 +317,20 @@ def find_ecommerce_stores():
         
         # Remove duplicates
         all_valid_results = list(set(all_valid_results))
+        print(f"Found {len(all_valid_results)} unique URLs to analyze")
         
-        # Analyze stores with threading for better performance
+        # Analyze stores
         analyzed_stores = []
-        ua = UserAgent()
         
-        # Use ThreadPoolExecutor to analyze stores concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_url = {executor.submit(analyze_store, url, ua): url for url in all_valid_results[:max_results]}
+        for url in all_valid_results[:max_results]:
+            result = analyze_store(url)
+            if result:
+                # Check if meets gateway count requirement
+                if gateways_count == 0 or result['gateways_count'] >= gateways_count:
+                    analyzed_stores.append(result)
             
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    result = future.result()
-                    if result and len(result['gateways']) >= gateways_count:
-                        with analysis_lock:
-                            analyzed_stores.append(result)
-                except Exception as e:
-                    print(f"Error processing {url}: {e}")
+            # Be polite with delays
+            time.sleep(0.5)
         
         return jsonify({
             'stores_found': len(analyzed_stores),
@@ -406,6 +353,20 @@ def health_check():
         'message': 'E-commerce Store Analysis API is running',
         'api_by': '@R_O_P_D'
     })
+
+@app.route('/test', methods=['GET'])
+def test_search():
+    """Test endpoint to verify search is working"""
+    try:
+        tool = DorkSearchTool()
+        results = tool.search_google('"add to cart" "buy now"', 1)
+        return jsonify({
+            'results': results,
+            'count': len(results),
+            'status': 'success'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
