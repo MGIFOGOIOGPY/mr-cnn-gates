@@ -11,31 +11,11 @@ import concurrent.futures
 import threading
 import json
 from datetime import datetime
-import asyncio
-import aiohttp
-import backoff
-import logging
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import urllib3
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import undetected_chromedriver as uc
-
-# Disable insecure request warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-# Payment gateway patterns - expanded with verification patterns
+# Payment gateway patterns - expanded
 gateways = [
     'Stripe', 'PayPal', 'Braintree', 'Razorpay', 'Authorize.Net',
     '2Checkout', 'Mollie', 'Google Pay', 'Checkout.com', 'BlueSnap',
@@ -49,68 +29,6 @@ gateways = [
     'PaySafeCard', 'Epay', 'Neteller', 'Moneybookers', 'ClickandBuy', 'CashU',
     'OneCard', 'PayOp', 'Coinbase', 'BitPay', 'CoinPayments', 'Cryptopay'
 ]
-
-# Gateway verification patterns (URLs, scripts, forms, etc.)
-gateway_verification_patterns = {
-    'Stripe': [
-        r'js\.stripe\.com', r'stripe\.com/v3', r'stripe\.com/v2', 
-        r'api\.stripe\.com', r'stripejs\.com', r'stripe-button',
-        r'stripe-checkout', r'stripe-payment', r'stripe-form'
-    ],
-    'PayPal': [
-        r'paypal\.com/sdk', r'paypal\.com/buttons', r'paypalobjects\.com',
-        r'paypal\.com/checkout', r'paypal\.com/webapps', r'paypal-button',
-        r'paypal-checkout', r'paypal-payment', r'paypal-form'
-    ],
-    'Braintree': [
-        r'braintreegateway\.com', r'braintree-api\.com', r'braintree-checkout',
-        r'braintree-payment', r'braintree-form', r'braintreejs\.com'
-    ],
-    'Razorpay': [
-        r'razorpay\.com', r'checkout\.razorpay\.com', r'razorpay-checkout',
-        r'razorpay-payment', r'razorpay-form', r'razorpayjs\.com'
-    ],
-    'Authorize.Net': [
-        r'authorize\.net', r'secure\.authorize\.net', r'authorize-checkout',
-        r'authorize-payment', r'authorize-form', r'authorizejs\.com'
-    ],
-    'Shopify': [
-        r'shopify\.com', r'shopify-checkout', r'shopify-payment',
-        r'shopify-form', r'shopifyjs\.com', r'shopify\.com/cdn'
-    ],
-    'WooCommerce': [
-        r'woocommerce\.com', r'wc-', r'woocommerce-checkout',
-        r'woocommerce-payment', r'woocommerce-form', r'woocommercejs\.com'
-    ],
-    'Square': [
-        r'square\.com', r'square-up\.com', r'square-checkout',
-        r'square-payment', r'square-form', r'squarejs\.com'
-    ],
-    'Amazon Pay': [
-        r'amazonpay\.com', r'pay\.amazon\.com', r'amazon-checkout',
-        r'amazon-payment', r'amazon-form', r'amazonpayjs\.com'
-    ],
-    'Google Pay': [
-        r'google\.com/pay', r'google-pay', r'google-checkout',
-        r'google-payment', r'google-form', r'googlepayjs\.com'
-    ],
-    'Apple Pay': [
-        r'apple\.com/pay', r'apple-pay', r'apple-checkout',
-        r'apple-payment', r'apple-form', r'applepayjs\.com'
-    ],
-    '2Checkout': [
-        r'2checkout\.com', r'2co\.com', r'2checkout-checkout',
-        r'2checkout-payment', r'2checkout-form', r'2checkoutjs\.com'
-    ],
-    'Adyen': [
-        r'adyen\.com', r'adyen-checkout', r'adyen-payment',
-        r'adyen-form', r'adyenjs\.com'
-    ],
-    'Klarna': [
-        r'klarna\.com', r'klarna-checkout', r'klarna-payment',
-        r'klarna-form', r'klarnajs\.com'
-    ]
-}
 
 # Global lock for thread-safe operations
 analysis_lock = threading.Lock()
@@ -127,523 +45,358 @@ class DorkSearchTool:
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
             'Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15'
+            'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
         ]
-        
-        # Create a session with retry strategy
-        self.session = self.create_session()
-        
-        # Expanded list of search engines
+        self.session = None
         self.search_engines = [
             'google', 'bing', 'yahoo', 'duckduckgo', 
             'brave', 'yandex', 'baidu', 'aol', 'ask',
-            'dogpile', 'startpage', 'qwant', 'ecosia',
-            'gibiru', 'swisscows', 'mojeek', 'search_encrypt',
-            'metager', 'yep', 'you', 'givewater'
+            'dogpile', 'startpage', 'qwant', 'ecosia'
         ]
-        
-        # Search engine configurations
-        self.engine_configs = {
-            'google': {
-                'url': 'https://www.google.com/search?q={query}&start={start}&num=100',
-                'pages_param': 'start',
-                'increment': 10,
-                'parser': self.parse_google
-            },
-            'bing': {
-                'url': 'https://www.bing.com/search?q={query}&first={start}',
-                'pages_param': 'first',
-                'increment': 10,
-                'parser': self.parse_bing
-            },
-            'yahoo': {
-                'url': 'https://search.yahoo.com/search?p={query}&b={start}',
-                'pages_param': 'b',
-                'increment': 10,
-                'parser': self.parse_yahoo
-            },
-            'duckduckgo': {
-                'url': 'https://html.duckduckgo.com/html/?q={query}&s={start}',
-                'pages_param': 's',
-                'increment': 30,
-                'parser': self.parse_duckduckgo
-            },
-            'brave': {
-                'url': 'https://search.brave.com/search?q={query}&offset={start}',
-                'pages_param': 'offset',
-                'increment': 10,
-                'parser': self.parse_brave
-            },
-            'yandex': {
-                'url': 'https://yandex.com/search/?text={query}&p={page}',
-                'pages_param': 'p',
-                'increment': 1,
-                'parser': self.parse_yandex
-            },
-            'baidu': {
-                'url': 'https://www.baidu.com/s?wd={query}&pn={start}',
-                'pages_param': 'pn',
-                'increment': 10,
-                'parser': self.parse_baidu
-            },
-            'aol': {
-                'url': 'https://search.aol.com/aol/search?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_aol
-            },
-            'ask': {
-                'url': 'https://www.ask.com/web?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_ask
-            },
-            'dogpile': {
-                'url': 'https://www.dogpile.com/serp?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_dogpile
-            },
-            'startpage': {
-                'url': 'https://www.startpage.com/sp/search?query={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_startpage
-            },
-            'qwant': {
-                'url': 'https://www.qwant.com/?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_qwant
-            },
-            'ecosia': {
-                'url': 'https://www.ecosia.org/search?q={query}&p={page}',
-                'pages_param': 'p',
-                'increment': 1,
-                'parser': self.parse_ecosia
-            },
-            'gibiru': {
-                'url': 'https://gibiru.com/results.html?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_gibiru
-            },
-            'swisscows': {
-                'url': 'https://swisscows.com/web?query={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_swisscows
-            },
-            'mojeek': {
-                'url': 'https://www.mojeek.com/search?q={query}&s={start}',
-                'pages_param': 's',
-                'increment': 10,
-                'parser': self.parse_mojeek
-            },
-            'search_encrypt': {
-                'url': 'https://www.searchencrypt.com/search?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_searchencrypt
-            },
-            'metager': {
-                'url': 'https://metager.org/meta/meta.ger3?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_metager
-            },
-            'yep': {
-                'url': 'https://yep.com/search?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_yep
-            },
-            'you': {
-                'url': 'https://you.com/search?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_you
-            },
-            'givewater': {
-                'url': 'https://search.givewater.com/serp?q={query}&page={page}',
-                'pages_param': 'page',
-                'increment': 1,
-                'parser': self.parse_givewater
-            }
-        }
-        
-        # Initialize selenium driver options
-        self.selenium_options = Options()
-        self.selenium_options.add_argument('--headless')
-        self.selenium_options.add_argument('--no-sandbox')
-        self.selenium_options.add_argument('--disable-dev-shm-usage')
-        self.selenium_options.add_argument('--disable-gpu')
-        self.selenium_options.add_argument('--window-size=1920,1080')
-        self.selenium_options.add_argument(f'--user-agent={self.get_random_agent()}')
-        
-        # Add additional options to avoid detection
-        self.selenium_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self.selenium_options.add_experimental_option('useAutomationExtension', False)
-        self.selenium_options.add_argument('--disable-blink-features=AutomationControlled')
     
-    def create_session(self):
-        """Create a requests session with retry strategy"""
-        session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET"]
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=100, pool_maxsize=100)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        return session
+    def get_session(self):
+        if not self.session:
+            self.session = requests.Session()
+        return self.session
     
     def get_random_agent(self):
         return random.choice(self.user_agents)
     
-    def get_selenium_driver(self):
-        """Get a Selenium WebDriver instance"""
-        try:
-            driver = uc.Chrome(options=self.selenium_options)
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            return driver
-        except Exception as e:
-            logger.error(f"Failed to create Selenium driver: {e}")
-            # Fallback to regular Chrome
-            try:
-                driver = webdriver.Chrome(options=self.selenium_options)
-                return driver
-            except Exception as e2:
-                logger.error(f"Failed to create Chrome driver: {e2}")
-                return None
-    
-    @backoff.on_exception(backoff.expo, (requests.exceptions.RequestException,), max_tries=3)
     def check_protection(self, url):
         """Check if URL has protection like CAPTCHA"""
         try:
             headers = {'User-Agent': self.get_random_agent()}
-            res = self.session.get(url, headers=headers, timeout=8, allow_redirects=True, verify=False)
+            res = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
             content = res.text.lower()
             protection_indicators = ['captcha', 'cloudflare', 'security check', 'firewall', 'ddos protection', 'access denied']
             return any(x in content for x in protection_indicators)
         except:
             return False
     
-    def parse_google(self, soup):
-        """Parse Google search results"""
+    def search_google(self, query, pages=5):
+        """Search using Google with improved parsing"""
         results = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if href.startswith('/url?q='):
-                try:
-                    link = href.split('/url?q=')[1].split('&')[0]
-                    parsed_url = urlparse(link)
-                    if parsed_url.netloc and 'google.com' not in parsed_url.netloc:
-                        if link not in results:
-                            results.append(link)
-                except:
-                    continue
-        return results
-    
-    def parse_bing(self, soup):
-        """Parse Bing search results"""
-        results = []
-        for li in soup.find_all('li', class_='b_algo'):
-            a = li.find('a')
-            if a and a.has_attr('href'):
-                href = a['href']
-                if href.startswith('http') and 'bing.com' not in href:
-                    if href not in results:
-                        results.append(href)
-        return results
-    
-    def parse_yahoo(self, soup):
-        """Parse Yahoo search results"""
-        results = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if href.startswith('http') and 'yahoo.com' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_duckduckgo(self, soup):
-        """Parse DuckDuckGo search results"""
-        results = []
-        for link in soup.find_all('a', class_='result__url'):
-            href = link.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_brave(self, soup):
-        """Parse Brave search results"""
-        results = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if href.startswith('http') and 'brave.com' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_yandex(self, soup):
-        """Parse Yandex search results"""
-        results = []
-        for a in soup.find_all('a', class_='link organic__url'):
-            href = a.get('href')
-            if href and href.startswith('http') and 'yandex' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_baidu(self, soup):
-        """Parse Baidu search results"""
-        results = []
-        for a in soup.find_all('a', href=True):
-            href = a.get('href')
-            if href and ('http://' in href or 'https://' in href) and 'baidu.com' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_aol(self, soup):
-        """Parse AOL search results"""
-        results = []
-        for a in soup.find_all('a', href=True):
-            href = a.get('href')
-            if href and href.startswith('http') and 'aol.com' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_ask(self, soup):
-        """Parse Ask.com search results"""
-        results = []
-        for a in soup.find_all('a', href=True):
-            href = a.get('href')
-            if href and href.startswith('http') and 'ask.com' not in href:
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_dogpile(self, soup):
-        """Parse Dogpile search results"""
-        results = []
-        for a in soup.find_all('a', class_='result__url'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_startpage(self, soup):
-        """Parse Startpage search results"""
-        results = []
-        for a in soup.find_all('a', class_='w-gl__result-url'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_qwant(self, soup):
-        """Parse Qwant search results"""
-        results = []
-        for a in soup.find_all('a', class_='result__url'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_ecosia(self, soup):
-        """Parse Ecosia search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-url'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_gibiru(self, soup):
-        """Parse Gibiru search results"""
-        results = []
-        for a in soup.find_all('a', class_='result_link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_swisscows(self, soup):
-        """Parse Swisscows search results"""
-        results = []
-        for a in soup.find_all('a', class_='link--result'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_mojeek(self, soup):
-        """Parse Mojeek search results"""
-        results = []
-        for a in soup.find_all('a', class_='title'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_searchencrypt(self, soup):
-        """Parse SearchEncrypt search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_metager(self, soup):
-        """Parse MetaGer search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_yep(self, soup):
-        """Parse Yep search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_you(self, soup):
-        """Parse You.com search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    def parse_givewater(self, soup):
-        """Parse GiveWater search results"""
-        results = []
-        for a in soup.find_all('a', class_='result-link'):
-            href = a.get('href')
-            if href and href.startswith('http'):
-                if href not in results:
-                    results.append(href)
-        return results
-    
-    @backoff.on_exception(backoff.expo, (requests.exceptions.RequestException,), max_tries=2)
-    def search_engine(self, engine, query, pages=3):
-        """Generic search engine method"""
-        results = []
-        config = self.engine_configs.get(engine)
-        
-        if not config:
-            return results
-        
         for page in range(pages):
             try:
-                # Build URL based on engine configuration
-                if config['pages_param'] in ['start', 'first', 's', 'pn']:
-                    start = page * config['increment']
-                    url = config['url'].format(query=quote_plus(query), start=start)
-                else:
-                    page_num = page + 1
-                    url = config['url'].format(query=quote_plus(query), page=page_num)
+                start = page * 10
+                url = f"https://www.google.com/search?q={quote_plus(query)}&start={start}&num=100"
                 
                 headers = {'User-Agent': self.get_random_agent()}
-                response = self.session.get(url, headers=headers, timeout=15, verify=False)
+                response = requests.get(url, headers=headers, timeout=20)
                 
                 if response.status_code != 200:
-                    logger.warning(f"{engine} search returned status {response.status_code}")
+                    print(f"Google search returned status {response.status_code}")
                     continue
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
-                page_results = config['parser'](soup)
-                results.extend(page_results)
                 
-                # Random delay between requests
-                time.sleep(random.uniform(0.1, 0.5))
+                # Find all search result links
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('/url?q='):
+                        try:
+                            link = href.split('/url?q=')[1].split('&')[0]
+                            parsed_url = urlparse(link)
+                            if parsed_url.netloc and 'google.com' not in parsed_url.netloc:
+                                if link not in results:
+                                    results.append(link)
+                        except:
+                            continue
+                
+                time.sleep(random.uniform(0.5, 1.5))
                 
             except Exception as e:
-                logger.error(f"{engine} search error: {e}")
+                print(f"Google search error: {e}")
                 continue
         
         return results
     
-    async def search_engine_async(self, engine, query, pages=3):
-        """Async version of search engine method"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.search_engine, engine, query, pages)
+    def search_bing(self, query, pages=5):
+        """Search using Bing"""
+        results = []
+        for page in range(1, pages + 1):
+            try:
+                url = f"https://www.bing.com/search?q={quote_plus(query)}&first={(page-1)*10+1}&count=50"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    print(f"Bing search returned status {response.status_code}")
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find organic results
+                for li in soup.find_all('li', class_='b_algo'):
+                    a = li.find('a')
+                    if a and a.has_attr('href'):
+                        href = a['href']
+                        if href.startswith('http') and 'bing.com' not in href:
+                            if href not in results:
+                                results.append(href)
+                
+                time.sleep(random.uniform(0.5, 1.5))
+                
+            except Exception as e:
+                print(f"Bing search error: {e}")
+                continue
+        
+        return results
     
-    async def search_all_engines_async(self, query, pages=3, engines=None):
-        """Search using multiple search engines asynchronously"""
+    def search_yahoo(self, query, pages=4):
+        """Search using Yahoo"""
+        results = []
+        for page in range(1, pages + 1):
+            try:
+                url = f"https://search.yahoo.com/search?p={quote_plus(query)}&b={(page-1)*10+1}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find search results
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('http') and 'yahoo.com' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.5, 1.5))
+                
+            except Exception as e:
+                print(f"Yahoo search error: {e}")
+                continue
+        
+        return results
+    
+    def search_duckduckgo(self, query, pages=4):
+        """Search using DuckDuckGo"""
+        results = []
+        for page in range(1, pages + 1):
+            try:
+                url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&s={(page-1)*30}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for link in soup.find_all('a', class_='result__url'):
+                    href = link.get('href')
+                    if href and href.startswith('http'):
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"DuckDuckGo search error: {e}")
+                continue
+        
+        return results
+    
+    def search_brave(self, query, pages=4):
+        """Search using Brave"""
+        results = []
+        for page in range(1, pages + 1):
+            try:
+                url = f"https://search.brave.com/search?q={quote_plus(query)}&offset={(page-1)*10}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('http') and 'brave.com' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"Brave search error: {e}")
+                continue
+        
+        return results
+    
+    def search_yandex(self, query, pages=3):
+        """Search using Yandex"""
+        results = []
+        for page in range(0, pages):
+            try:
+                url = f"https://yandex.com/search/?text={quote_plus(query)}&p={page}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for a in soup.find_all('a', class_='link organic__url'):
+                    href = a.get('href')
+                    if href and href.startswith('http') and 'yandex' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"Yandex search error: {e}")
+                continue
+        
+        return results
+    
+    def search_baidu(self, query, pages=3):
+        """Search using Baidu"""
+        results = []
+        for page in range(0, pages):
+            try:
+                url = f"https://www.baidu.com/s?wd={quote_plus(query)}&pn={page*10}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for a in soup.find_all('a', href=True):
+                    href = a.get('href')
+                    if href and ('http://' in href or 'https://' in href) and 'baidu.com' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"Baidu search error: {e}")
+                continue
+        
+        return results
+    
+    def search_aol(self, query, pages=2):
+        """Search using AOL"""
+        results = []
+        for page in range(0, pages):
+            try:
+                url = f"https://search.aol.com/aol/search?q={quote_plus(query)}&page={page+1}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for a in soup.find_all('a', href=True):
+                    href = a.get('href')
+                    if href and href.startswith('http') and 'aol.com' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"AOL search error: {e}")
+                continue
+        
+        return results
+    
+    def search_ask(self, query, pages=2):
+        """Search using Ask.com"""
+        results = []
+        for page in range(0, pages):
+            try:
+                url = f"https://www.ask.com/web?q={quote_plus(query)}&page={page+1}"
+                
+                headers = {'User-Agent': self.get_random_agent()}
+                response = requests.get(url, headers=headers, timeout=20)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Find result links
+                for a in soup.find_all('a', href=True):
+                    href = a.get('href')
+                    if href and href.startswith('http') and 'ask.com' not in href:
+                        if href not in results:
+                            results.append(href)
+                
+                time.sleep(random.uniform(0.3, 1))
+                
+            except Exception as e:
+                print(f"Ask search error: {e}")
+                continue
+        
+        return results
+    
+    def search_all_engines(self, query, pages=3, engines=None):
+        """Search using multiple search engines"""
         all_results = []
         
-        logger.info(f"🔍 Searching for: {query}")
+        print(f"🔍 Searching for: {query}")
         
         if engines is None:
             engines = self.search_engines
         
-        # Create async tasks for all engines
-        tasks = []
-        for engine in engines:
-            if engine in self.engine_configs:
-                tasks.append(self.search_engine_async(engine, query, pages))
+        # Map engine names to methods
+        engine_methods = {
+            'google': self.search_google,
+            'bing': self.search_bing,
+            'yahoo': self.search_yahoo,
+            'duckduckgo': self.search_duckduckgo,
+            'brave': self.search_brave,
+            'yandex': self.search_yandex,
+            'baidu': self.search_baidu,
+            'aol': self.search_aol,
+            'ask': self.search_ask
+        }
         
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Process results
-        for i, result in enumerate(results):
-            engine = engines[i]
-            if isinstance(result, Exception):
-                logger.error(f"❌ {engine} search failed: {result}")
-            else:
-                all_results.extend(result)
-                logger.info(f"✅ {engine} found {len(result)} results")
+        # Search selected engines in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(engines)) as executor:
+            futures = {}
+            
+            for engine in engines:
+                if engine in engine_methods:
+                    futures[executor.submit(engine_methods[engine], query, pages)] = engine
+            
+            for future in concurrent.futures.as_completed(futures):
+                engine = futures[future]
+                try:
+                    results = future.result(timeout=30)
+                    all_results.extend(results)
+                    print(f"✅ {engine} found {len(results)} results")
+                except Exception as e:
+                    print(f"❌ {engine} search failed: {e}")
         
         # Remove duplicates
         unique_results = list(set(all_results))
-        logger.info(f"📊 Total unique results: {len(unique_results)}")
+        print(f"📊 Total unique results: {len(unique_results)}")
         return unique_results
-    
-    def search_all_engines(self, query, pages=3, engines=None):
-        """Synchronous wrapper for async search"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            results = loop.run_until_complete(self.search_all_engines_async(query, pages, engines))
-        finally:
-            loop.close()
-        return results
     
     def filter_valid_results(self, results, max_results=50):
         """Filter results by checking protection and validity"""
@@ -659,10 +412,10 @@ class DorkSearchTool:
                 if not self.check_protection(url):
                     return url
             except Exception as e:
-                logger.error(f"❌ Error checking {url}: {e}")
+                print(f"❌ Error checking {url}: {e}")
             return None
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
             future_to_url = {executor.submit(check_url_protection, url): url for url in results}
             
             for future in concurrent.futures.as_completed(future_to_url):
@@ -672,7 +425,7 @@ class DorkSearchTool:
                 result = future.result()
                 if result:
                     valid_results.append(result)
-                    logger.info(f"✅ Found valid URL: {result}")
+                    print(f"✅ Found valid URL: {result}")
         
         return valid_results
 
@@ -717,45 +470,8 @@ def is_real_store(soup, text):
     
     return indicators_found >= 3 or len(ecommerce_elements) > 2 or len(product_elements) > 3 or len(cart_icons) > 0
 
-def verify_gateway_presence(text, gateway):
-    """Verify that a gateway is actually present on the page"""
-    if not text:
-        return False
-    
-    text_lower = text.lower()
-    gateway_lower = gateway.lower()
-    
-    # Check for gateway name in text
-    if gateway_lower in text_lower:
-        return True
-    
-    # Check for verification patterns
-    if gateway in gateway_verification_patterns:
-        for pattern in gateway_verification_patterns[gateway]:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True
-    
-    # Additional checks for common payment indicators
-    payment_indicators = {
-        'Credit Card': ['credit card', 'card number', 'expiry date', 'cvv', 'visa', 'mastercard', 'amex', 'american express'],
-        'Debit Card': ['debit card', 'card number', 'expiry date', 'cvv'],
-        'Visa': ['visa', 'card number', 'expiry date', 'cvv'],
-        'MasterCard': ['mastercard', 'card number', 'expiry date', 'cvv'],
-        'American Express': ['amex', 'american express', 'card number', 'expiry date', 'cvv'],
-        'Payment Method': ['payment method', 'pay with', 'payment options'],
-        'Payment Gateway': ['payment gateway', 'payment processor'],
-        'Secure Payment': ['secure payment', 'ssl', 'encryption']
-    }
-    
-    if gateway in payment_indicators:
-        for indicator in payment_indicators[gateway]:
-            if indicator in text_lower:
-                return True
-    
-    return False
-
 def find_gateways(text):
-    """Find payment gateways mentioned in the text and verify they're real"""
+    """Find payment gateways mentioned in the text"""
     found = set()
     if not text:
         return found
@@ -763,8 +479,38 @@ def find_gateways(text):
     text_lower = text.lower()
     
     for gateway in gateways:
-        if verify_gateway_presence(text, gateway):
+        gateway_lower = gateway.lower()
+        # Check for gateway name in text
+        if gateway_lower in text_lower:
             found.add(gateway)
+        
+        # Also check for common variations
+        variations = {
+            'stripe': ['stripe.com', 'stripe payment', 'stripe.js', 'stripe-api', 'stripecheckout'],
+            'paypal': ['paypal.com', 'paypal checkout', 'paypal-button', 'paypalobjects.com'],
+            'braintree': ['braintreepayments.com', 'braintreegateway.com', 'braintree-api'],
+            'razorpay': ['razorpay.com', 'razorpaycheckout', 'razorpay.js'],
+            'authorize.net': ['authorize.net', 'authorizenet.com', 'authorize-api'],
+            'woocommerce': ['woocommerce.com', 'wc-', 'woocommerce-api', 'woocommerce_checkout'],
+            'shopify': ['shopify.com', 'shopify-api', 'shopify-checkout', 'shopify.js'],
+            'square': ['squareup.com', 'square-api', 'square-payments'],
+            'adyen': ['adyen.com', 'adyen-api', 'adyen-payments'],
+            '2checkout': ['2checkout.com', '2co.com', 'avangate.com'],
+            'mollie': ['mollie.com', 'mollie-api', 'mollie-payments'],
+            'klarna': ['klarna.com', 'klarna-api', 'klarna-payments'],
+            'amazon pay': ['amazonpay.com', 'amazon-pay', 'amazonpayments'],
+            'google pay': ['google-pay', 'googlepay.com', 'google-pay-api'],
+            'apple pay': ['apple-pay', 'applepay.com', 'apple-pay-api'],
+            'alipay': ['alipay.com', 'alipay-api', 'alipay-payment'],
+            'wechat pay': ['wechat-pay', 'wechatpay.com', 'wechat-payment'],
+            'bitpay': ['bitpay.com', 'bitpay-api', 'bitpay-payment'],
+            'coinbase': ['coinbase.com', 'coinbase-commerce', 'coinbase-payment']
+        }
+        
+        if gateway_lower in variations:
+            for variation in variations[gateway_lower]:
+                if variation in text_lower:
+                    found.add(gateway)
     
     # Additional checks for common payment indicators
     payment_indicators = [
@@ -806,7 +552,7 @@ def find_gateways(text):
         (r'2checkout\.com', '2Checkout'),
         (r'mollie\.com', 'Mollie'),
         (r'checkout\.shopify\.com', 'Shopify'),
-        (r'square\.com', 'Square'),
+        (r' Square\.com', 'Square'),
         (r'pay\.amazon\.com', 'Amazon Pay'),
         (r'skrill\.com', 'Skrill'),
         (r'wechatpay', 'WeChat Pay'),
@@ -835,8 +581,6 @@ def extract_prices(text):
         r'GBP\s*\d+\.\d{2}',  # GBP 10.99
         r'price:\s*\$\d+',    # Price: $10
         r'cost:\s*\$\d+',     # Cost: $10
-        r'\d+\.\d{2}\s*(USD|EUR|GBP|CAD|AUD|JPY|CNY|INR|RUB|BRL|MXN)',  # 10.99 USD
-        r'(USD|EUR|GBP|CAD|AUD|JPY|CNY|INR|RUB|BRL|MXN)\s*\d+\.\d{2}',  # USD 10.99
     ]
     
     prices = []
@@ -851,7 +595,7 @@ def analyze_store(url, target_price=None, gateway_type=None):
     try:
         ua = UserAgent()
         headers = {'User-Agent': ua.random}
-        response = requests.get(url, headers=headers, timeout=15, verify=False)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
             return None
@@ -910,7 +654,7 @@ def analyze_store(url, target_price=None, gateway_type=None):
         }
         
     except Exception as e:
-        logger.error(f"❌ Error analyzing {url}: {e}")
+        print(f"❌ Error analyzing {url}: {e}")
         return None
 
 def send_telegram_message_sync(bot_token, chat_id, message):
@@ -921,7 +665,7 @@ def send_telegram_message_sync(bot_token, chat_id, message):
         bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
         return True
     except Exception as e:
-        logger.error(f"❌ Telegram error: {e}")
+        print(f"❌ Telegram error: {e}")
         return False
 
 @app.route('/analyze', methods=['GET'])
@@ -1047,7 +791,7 @@ def find_ecommerce_stores():
         
         # Search with multiple queries
         for query in ecommerce_queries:
-            logger.info(f"🔍 Searching for: {query}")
+            print(f"🔍 Searching for: {query}")
             results = tool.search_all_engines(query, pages, engines_list)
             valid_results = tool.filter_valid_results(results, max_results)
             all_valid_results.extend(valid_results)
@@ -1057,7 +801,7 @@ def find_ecommerce_stores():
         
         # Remove duplicates
         all_valid_results = list(set(all_valid_results))
-        logger.info(f"📊 Found {len(all_valid_results)} unique URLs to analyze")
+        print(f"📊 Found {len(all_valid_results)} unique URLs to analyze")
         
         # Analyze stores with threading
         analyzed_stores = []
@@ -1174,4 +918,4 @@ def list_search_engines():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
