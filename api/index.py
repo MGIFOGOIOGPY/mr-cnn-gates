@@ -590,8 +590,24 @@ def extract_prices(text):
     
     return prices
 
-def analyze_store(url, target_price=None, gateway_type=None):
-    """Analyze a single store with price and gateway filtering"""
+def has_low_price_products(prices, max_price=10):
+    """Check if the store has products with prices below max_price"""
+    if not prices:
+        return False
+    
+    for price_str in prices:
+        try:
+            # Extract numeric value from price string
+            price_value = float(re.search(r'\d+\.?\d*', price_str.replace('$', '')).group())
+            if price_value <= max_price:
+                return True
+        except:
+            continue
+    
+    return False
+
+def analyze_store(url, target_price=None, gateway_type=None, max_price=10):
+    """Analyze a single store with price and gateway filtering - FOCUS ON LOW PRICES"""
     try:
         ua = UserAgent()
         headers = {'User-Agent': ua.random}
@@ -610,7 +626,11 @@ def analyze_store(url, target_price=None, gateway_type=None):
         # Extract prices
         prices = extract_prices(text)
         
-        # Price filtering
+        # CRITICAL: Filter stores that have low price products (below max_price)
+        if not has_low_price_products(prices, max_price):
+            return None
+        
+        # Price filtering for specific target price
         if target_price:
             price_found = False
             for price_str in prices:
@@ -641,16 +661,35 @@ def analyze_store(url, target_price=None, gateway_type=None):
         # Check for authentication
         is_auth = any(x in text.lower() for x in ['login', 'signin', 'register', 'account', 'my-account', 'sign up', 'password', 'username'])
         
+        # Calculate average price for ranking
+        numeric_prices = []
+        for price_str in prices:
+            try:
+                price_value = float(re.search(r'\d+\.?\d*', price_str.replace('$', '')).group())
+                numeric_prices.append(price_value)
+            except:
+                continue
+        
+        avg_price = sum(numeric_prices) / len(numeric_prices) if numeric_prices else 0
+        
         return {
             'url': url,
             'real_store': True,
             'gateways': list(gateways_found),
             'gateways_count': len(gateways_found),
             'prices_found': prices[:10],  # Return first 10 prices
+            'average_price': round(avg_price, 2),
+            'low_price_products': has_low_price_products(prices, max_price),
             'cloudflare': cloudflare,
             'auth': is_auth,
             'captcha': captcha,
-            'vbv': vbv
+            'vbv': vbv,
+            'price_analysis': {
+                'total_prices_found': len(prices),
+                'prices_below_10': len([p for p in numeric_prices if p <= 10]),
+                'min_price': min(numeric_prices) if numeric_prices else 0,
+                'max_price': max(numeric_prices) if numeric_prices else 0
+            }
         }
         
     except Exception as e:
@@ -674,6 +713,7 @@ def analyze_single_store():
     url = request.args.get('url')
     target_price = request.args.get('target_price')
     gateway_type = request.args.get('gateway_type')
+    max_price = float(request.args.get('max_price', 10))  # Default max price is 10
     
     if not url:
         return jsonify({
@@ -696,11 +736,11 @@ def analyze_single_store():
                     'api_by': '@R_O_P_D'
                 }), 400
         
-        result = analyze_store(url, price_value, gateway_type)
+        result = analyze_store(url, price_value, gateway_type, max_price)
         
         if not result:
             return jsonify({
-                'error': 'This does not appear to be a valid e-commerce store or it doesn\'t match your filters',
+                'error': 'This does not appear to be a valid e-commerce store or it doesn\'t have products with prices below ' + str(max_price),
                 'api_by': '@R_O_P_D'
             }), 404
         
@@ -714,7 +754,7 @@ def analyze_single_store():
 
 @app.route('/cvn', methods=['GET'])
 def find_ecommerce_stores():
-    """API endpoint to find e-commerce stores and analyze them"""
+    """API endpoint to find e-commerce stores and analyze them - FOCUS ON LOW PRICE STORES"""
     try:
         # Get query parameters
         pages = int(request.args.get('pages', 5))
@@ -726,6 +766,7 @@ def find_ecommerce_stores():
         vbv_filter = request.args.get('vbv')
         gateway_type = request.args.get('gateway_type')
         target_price = request.args.get('target_price')
+        max_price = float(request.args.get('max_price', 10))  # Default max price is 10
         search_engines = request.args.get('search_engines')
         custom_query = request.args.get('custom_query')
         bot_token = request.args.get('bot_token')
@@ -747,51 +788,46 @@ def find_ecommerce_stores():
         if search_engines:
             engines_list = [engine.strip().lower() for engine in search_engines.split(',')]
         
-        # Comprehensive e-commerce search queries
-        ecommerce_queries = [
-            '"add to cart" "buy now"',
-            '"online store" "products"',
-            '"shop now" "free shipping"',
-            '"ecommerce" "checkout"',
-            '"buy" "price" "shopping"',
-            '"clothing store" "online shop"',
-            '"electronics" "add to cart"',
-            '"digital products" "buy now"',
-            '"jewelry" "online store"',
-            '"home decor" "shop online"',
-            '"beauty products" "buy"',
-            '"sports equipment" "online store"',
-            '"books" "online bookstore"',
-            '"toys" "shop online"',
-            '"food" "online delivery"',
-            '"add to cart button" "checkout"',
-            '"proceed to checkout" "shopping cart"',
-            '"place order" "payment method"',
-            '"credit card" "secure checkout"',
-            '"buy now button" "add to basket"'
+        # CRITICAL: Focus on low price e-commerce search queries
+        low_price_queries = [
+            f'"$4" "add to cart"', f'"$10" "buy now"',
+            f'"under $10" "online store"', f'"cheap" "products"',
+            f'"low price" "shopping"', f'"affordable" "buy now"',
+            f'"$5" "shop"', f'"$7" "store"', f'"$8" "ecommerce"',
+            f'"budget" "online shop"', f'"discount" "add to cart"',
+            f'"sale" "checkout"', f'"$6" "purchase"', f'"$9" "order"',
+            f'"inexpensive" "shopping cart"', f'"$3" "payment"',
+            f'"$2" "credit card"', f'"$1" "buy online"',
+            f'"under $5" "digital products"', f'"$4.99" "shop now"',
+            f'"$9.99" "free shipping"', f'"low cost" "add to basket"',
+            f'"$0.99" "checkout"', f'"$1.99" "place order"',
+            f'"$2.99" "payment method"', f'"$3.99" "secure checkout"',
+            f'"$4.99" "shopping"', f'"$5.99" "online store"',
+            f'"$6.99" "e-commerce"', f'"$7.99" "web store"',
+            f'"$8.99" "buy"', f'"$9.99" "purchase online"'
         ]
         
         # Add custom query if provided
         if custom_query:
-            ecommerce_queries.insert(0, custom_query)
-        
-        # Add price-specific queries if target_price is provided
-        if price_value:
-            price_queries = [
-                f'"{price_value}" "add to cart"',
-                f'"{price_value}" "buy now"',
-                f'"{price_value}" "price"',
-                f'"{price_value}" "shop"',
-                f'"{price_value}" "product"'
-            ]
-            ecommerce_queries = price_queries + ecommerce_queries
+            low_price_queries.insert(0, custom_query)
+        else:
+            # Add price-specific queries based on target price
+            if price_value:
+                price_queries = [
+                    f'"{price_value}" "add to cart"',
+                    f'"{price_value}" "buy now"',
+                    f'"{price_value}" "price"',
+                    f'"{price_value}" "shop"',
+                    f'"{price_value}" "product"'
+                ]
+                low_price_queries = price_queries + low_price_queries
         
         tool = DorkSearchTool()
         all_valid_results = []
         
-        # Search with multiple queries
-        for query in ecommerce_queries:
-            print(f"🔍 Searching for: {query}")
+        # Search with low price focused queries
+        for query in low_price_queries:
+            print(f"🔍 Searching for low price stores: {query}")
             results = tool.search_all_engines(query, pages, engines_list)
             valid_results = tool.filter_valid_results(results, max_results)
             all_valid_results.extend(valid_results)
@@ -801,13 +837,13 @@ def find_ecommerce_stores():
         
         # Remove duplicates
         all_valid_results = list(set(all_valid_results))
-        print(f"📊 Found {len(all_valid_results)} unique URLs to analyze")
+        print(f"📊 Found {len(all_valid_results)} unique URLs to analyze for low price stores")
         
-        # Analyze stores with threading
+        # Analyze stores with threading - FOCUS ON LOW PRICES
         analyzed_stores = []
         
         def analyze_url(url):
-            result = analyze_store(url, price_value, gateway_type)
+            result = analyze_store(url, price_value, gateway_type, max_price)
             if result:
                 # Apply additional filters
                 if gateways_count > 0 and result['gateways_count'] < gateways_count:
@@ -835,41 +871,52 @@ def find_ecommerce_stores():
                     if len(analyzed_stores) >= max_results:
                         break
         
+        # Sort stores by average price (lowest first)
+        analyzed_stores.sort(key=lambda x: x.get('average_price', 999))
+        
         # Prepare response
         response_data = {
             'stores_found': len(analyzed_stores),
             'stores': analyzed_stores,
             'api_by': '@R_O_P_D',
-            'message': 'E-commerce store search completed successfully',
+            'message': f'Low price e-commerce store search completed (max price: ${max_price})',
             'search_parameters': {
                 'pages': pages,
                 'max_results': max_results,
                 'target_price': target_price,
+                'max_price': max_price,
                 'gateway_type': gateway_type,
                 'search_engines': engines_list or 'all'
+            },
+            'price_statistics': {
+                'stores_with_prices_below_10': len([s for s in analyzed_stores if s.get('average_price', 0) <= 10]),
+                'lowest_price_found': min([s.get('average_price', 999) for s in analyzed_stores]) if analyzed_stores else 0,
+                'highest_price_found': max([s.get('average_price', 0) for s in analyzed_stores]) if analyzed_stores else 0
             },
             'timestamp': datetime.now().isoformat()
         }
         
         # Send to Telegram if token and chat_id provided
         if bot_token and chat_id:
-            message = f"<b>🔍 E-commerce Store Analysis Results</b>\n\n"
+            message = f"<b>🔍 LOW PRICE E-commerce Store Analysis Results</b>\n\n"
             message += f"<b>Stores Found:</b> {len(analyzed_stores)}\n"
             message += f"<b>Target Price:</b> {target_price or 'Any'}\n"
+            message += f"<b>Max Price Filter:</b> ${max_price}\n"
             message += f"<b>Gateway Type:</b> {gateway_type or 'Any'}\n"
             message += f"<b>Timestamp:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             
             for i, store in enumerate(analyzed_stores[:5]):  # Send first 5 stores
                 message += f"<b>Store {i+1}:</b> {store['url']}\n"
                 message += f"<b>Gateways:</b> {', '.join(store['gateways'])}\n"
-                message += f"<b>Prices:</b> {', '.join(store.get('prices_found', [])[:3])}\n"
+                message += f"<b>Avg Price:</b> ${store.get('average_price', 0)}\n"
+                message += f"<b>Prices Found:</b> {', '.join(store.get('prices_found', [])[:3])}\n"
                 message += f"<b>Cloudflare:</b> {'Yes' if store['cloudflare'] else 'No'}\n"
                 message += f"<b>Auth:</b> {'Yes' if store['auth'] else 'No'}\n"
                 message += f"<b>Captcha:</b> {'Yes' if store['captcha'] else 'No'}\n"
                 message += f"<b>VBV:</b> {'Yes' if store['vbv'] else 'No'}\n\n"
             
             if len(analyzed_stores) > 5:
-                message += f"<i>... and {len(analyzed_stores) - 5} more stores</i>\n\n"
+                message += f"<i>... and {len(analyzed_stores) - 5} more low price stores</i>\n\n"
             
             message += f"<b>API by:</b> @R_O_P_D"
             
@@ -889,7 +936,7 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'OK',
-        'message': 'E-commerce Store Analysis API is running',
+        'message': 'Low Price E-commerce Store Analysis API is running',
         'api_by': '@R_O_P_D',
         'timestamp': datetime.now().isoformat()
     })
@@ -899,7 +946,7 @@ def test_search():
     """Test endpoint to verify search is working"""
     try:
         tool = DorkSearchTool()
-        results = tool.search_google('"add to cart" "buy now"', 1)
+        results = tool.search_google('"$4" "add to cart"', 1)
         return jsonify({
             'results': results[:5],  # Return first 5 results
             'count': len(results),
