@@ -747,8 +747,127 @@ def find_ecommerce_stores():
         if search_engines:
             engines_list = [engine.strip().lower() for engine in search_engines.split(',')]
         
-        # Comprehensive e-commerce search queries
+        # Enhanced e-commerce search queries with improved dorks
         ecommerce_queries = [
+            # Shopify specific dorks
+            'site:myshopify.com "powered by shopify"',
+            'site:myshopify.com "powered by shopify" 2025',
+            'inurl:myshopify.com intitle:"shop" "powered by shopify"',
+            'site:myshopify.com intext:"checkout" "powered by shopify"',
+            'site:myshopify.com intext:"Buy now" "powered by shopify"',
+            
+            # Stripe specific dorks
+            'intext:"Powered by Stripe" site:myshopify.com',
+            '"Powered by Stripe" "checkout" inurl:myshopify.com',
+            'buy now inurl:myshopify.com intext:"Powered by Stripe"',
+            'intitle:checkout "Powered by Stripe"',
+            'intext:"card number" "Powered by Stripe"',
+            
+            # Donation and payment dorks
+            'intitle:donate "stripe"',
+            'intext:(usd donate) "powered by donate"',
+            'inurl:donate intext:"powered by"',
+            'intext:"donate" "Powered by Stripe"',
+            'intitle:"donate" site:myshopify.com',
+            
+            # Price specific dorks
+            '"1$" "sale" inurl:myshopify.com intext:"Powered by Shopify"',
+            '"3$" "discount offer" inurl:myshopify.com intext:"Powered by Shopify"',
+            '"4$" "sale" inurl:myshopify.com intext:"Powered by Shopify"',
+            '"0.99$" inurl:myshopify.com intext:"sale"',
+            '"$1.00" inurl:myshopify.com "discount"',
+            
+            # Payment form dorks
+            '"Pay with card" "Card Number" "Expiration Date (MM/YY)" "CVV"',
+            'intext:"Pay with card" intext:"Card Number" intext:"Expiration Date (MM/YY)" intext:"CVV"',
+            'allintext: "Pay with card" "Card Number" "Expiration Date (MM/YY)" "CVV"',
+            
+            # Product specific dorks
+            'intext:socks "powered by shopify" + "2025"',
+            'inurl:myshopify.com intext:"socks" "powered by shopify"',
+            '"socks" site:myshopify.com intitle:"shop"',
+            
+            # Checkout and payment pages
+            'site:myshopify.com intext:"Pay with card" intext:"Card Number" intext:"CVV"',
+            'site:myshopify.com inurl:checkout "Pay with card" "Expiration Date (MM/YY)"',
+            'inurl:myshopify.com intitle:checkout "Card Number" "CVV"',
+            'site:myshopify.com intext:"Pay with card" "Powered by Shopify" -blog -faq',
+            
+            # Braintree and PayPal dorks
+            'site:myshopify.com intext:"Braintree" OR "PayPal Powered by Braintree"',
+            'site:wordpress.org intext:"PayPal Powered by Braintree"',
+            'site:bigcommerce.com intext:"Braintree"',
+            '"Pay with card" "Card Number" "Expiration Date" "CVV" "Braintree"',
+            'allintext:"Pay with card" "Card Number" "Expiration Date" "CVV" "Braintree"',
+            
+            # Payment method URLs
+            'inurl:add-payment-methods',
+            'inurl:add-payment',
+            'inurl:billing',
+            'inurl:payment-method',
+            'inurl:checkout',
+            'inurl:credit-card',
+            'inurl:account/payment',
+            'inurl:update-payment',
+            
+            # Free trial and signup URLs
+            'inurl:Free-Trial',
+            'inurl:trial-signup',
+            'inurl:start-trial',
+            'inurl:register-free',
+            'inurl:get-started-free',
+            'inurl:signup-free',
+            'inurl:join-free',
+            'inurl:demo-account',
+            
+            # E-commerce action URLs
+            'inurl:checkout',
+            'inurl:cart',
+            'inurl:order',
+            'inurl:buy',
+            'inurl:purchase',
+            'inurl:payment',
+            'inurl:confirm-order',
+            'inurl:complete-order',
+            'inurl:pay',
+            'inurl:billing',
+            'inurl:checkout-step',
+            
+            # Pricing and subscription URLs
+            'inurl:pricing',
+            'inurl:plans',
+            'inurl:subscription',
+            'inurl:membership',
+            'inurl:packages',
+            'inurl:pricing-table',
+            'inurl:compare-plans',
+            'inurl:upgrade',
+            'inurl:offer',
+            'inurl:pricing-page',
+            'inurl:fees',
+            
+            # Payment gateway text indicators
+            'intext:"Powered by PayPal"',
+            'intext:"Powered by Square"',
+            'intext:"Powered by Braintree"',
+            'intext:"Powered by Shopify"',
+            'intext:"Powered by Paddle"',
+            'intext:"Powered by FastSpring"',
+            'intext:"Powered by Gumroad"',
+            'intext:"Powered by Chargebee"',
+            'intext:"Powered by Lemon Squeezy"',
+            'intext:"Powered by 2Checkout"',
+            'intext:"Payment processed by Stripe"',
+            'intext:"Secure payments via Stripe"',
+            'intext:"Checkout with Stripe"',
+            'intext:"Transactions powered by PayPal"',
+            'intext:"Accepting payments with Stripe"',
+            'intext:"Payment gateway"',
+            'intext:"PCI compliant checkout"',
+            'intext:"Pay securely with"',
+            'intext: Klarna',
+            
+            # General e-commerce queries
             '"add to cart" "buy now"',
             '"online store" "products"',
             '"shop now" "free shipping"',
