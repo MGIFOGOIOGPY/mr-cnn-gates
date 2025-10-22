@@ -1,9 +1,12 @@
-Flask==2.3.3
+flask==2.3.3
 requests==2.31.0
 beautifulsoup4==4.12.2
 fake-useragent==1.4.0
-Flask-CORS==4.0.0
-python-telegram-bot==20.7
+flask-cors==4.0.0
 urllib3==1.26.16
 lxml==4.9.3
-soupsieve==2.5
+python-telegram-bot==20.7
+whoosh==2.7.4
+concurrent-log-handler==0.9.24
+python-dotenv==1.0.0
+gunicorn==21.2.0
