@@ -11,6 +11,11 @@ import concurrent.futures
 import threading
 import json
 from datetime import datetime
+import whoosh.index as index
+from whoosh.fields import Schema, TEXT, ID, NUMERIC
+from whoosh.qparser import QueryParser
+from whoosh import index as whoosh_index
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -32,6 +37,80 @@ gateways = [
 
 # Global lock for thread-safe operations
 analysis_lock = threading.Lock()
+
+# Whoosh search index setup
+INDEX_DIR = "search_index"
+if not os.path.exists(INDEX_DIR):
+    os.mkdir(INDEX_DIR)
+
+# Define schema for search index
+schema = Schema(
+    url=ID(stored=True, unique=True),
+    title=TEXT(stored=True),
+    content=TEXT(stored=True),
+    gateways=TEXT(stored=True),
+    prices=TEXT(stored=True),
+    cloudflare=NUMERIC(stored=True),
+    auth=NUMERIC(stored=True),
+    captcha=NUMERIC(stored=True),
+    vbv=NUMERIC(stored=True),
+    timestamp=TEXT(stored=True)
+)
+
+class SearchIndexManager:
+    def __init__(self):
+        self.index = self.create_or_open_index()
+    
+    def create_or_open_index(self):
+        if whoosh_index.exists_in(INDEX_DIR):
+            return whoosh_index.open_dir(INDEX_DIR)
+        else:
+            return whoosh_index.create_in(INDEX_DIR, schema)
+    
+    def add_store(self, store_data):
+        writer = self.index.writer()
+        try:
+            writer.add_document(
+                url=store_data['url'],
+                title=store_data.get('url', ''),
+                content=f"{store_data.get('gateways', [])} {store_data.get('prices_found', [])}",
+                gateways=" ".join(store_data.get('gateways', [])),
+                prices=" ".join(store_data.get('prices_found', [])),
+                cloudflare=1 if store_data.get('cloudflare') else 0,
+                auth=1 if store_data.get('auth') else 0,
+                captcha=1 if store_data.get('captcha') else 0,
+                vbv=1 if store_data.get('vbv') else 0,
+                timestamp=datetime.now().isoformat()
+            )
+            writer.commit()
+        except Exception as e:
+            print(f"Error adding to index: {e}")
+            writer.cancel()
+    
+    def search_stores(self, query_text, limit=50):
+        results = []
+        with self.index.searcher() as searcher:
+            query = QueryParser("content", self.index.schema).parse(query_text)
+            search_results = searcher.search(query, limit=limit)
+            
+            for result in search_results:
+                store_data = {
+                    'url': result['url'],
+                    'gateways': result['gateways'].split() if result['gateways'] else [],
+                    'prices_found': result['prices'].split() if result['prices'] else [],
+                    'cloudflare': bool(result['cloudflare']),
+                    'auth': bool(result['auth']),
+                    'captcha': bool(result['captcha']),
+                    'vbv': bool(result['vbv']),
+                    'real_store': True,
+                    'gateways_count': len(result['gateways'].split()) if result['gateways'] else 0
+                }
+                results.append(store_data)
+        
+        return results
+
+# Initialize search index manager
+search_manager = SearchIndexManager()
 
 class DorkSearchTool:
     def __init__(self):
@@ -641,7 +720,7 @@ def analyze_store(url, target_price=None, gateway_type=None):
         # Check for authentication
         is_auth = any(x in text.lower() for x in ['login', 'signin', 'register', 'account', 'my-account', 'sign up', 'password', 'username'])
         
-        return {
+        store_data = {
             'url': url,
             'real_store': True,
             'gateways': list(gateways_found),
@@ -652,6 +731,11 @@ def analyze_store(url, target_price=None, gateway_type=None):
             'captcha': captcha,
             'vbv': vbv
         }
+        
+        # Add to search index for fast retrieval
+        search_manager.add_store(store_data)
+        
+        return store_data
         
     except Exception as e:
         print(f"❌ Error analyzing {url}: {e}")
@@ -730,6 +814,7 @@ def find_ecommerce_stores():
         custom_query = request.args.get('custom_query')
         bot_token = request.args.get('bot_token')
         chat_id = request.args.get('chat_id')
+        use_cache = request.args.get('use_cache', 'true').lower() == 'true'
         
         # Convert target_price to float if provided
         price_value = None
@@ -741,6 +826,77 @@ def find_ecommerce_stores():
                     'error': 'Invalid target_price format. Use numbers only (e.g., 1.99)',
                     'api_by': '@R_O_P_D'
                 }), 400
+        
+        # Try to get results from cache first if use_cache is True
+        if use_cache and (gateway_type or target_price):
+            search_query = ""
+            if gateway_type:
+                search_query += f" {gateway_type}"
+            if target_price:
+                search_query += f" {target_price}"
+            
+            cached_results = search_manager.search_stores(search_query.strip(), max_results)
+            
+            if cached_results:
+                # Apply additional filters to cached results
+                filtered_results = []
+                for store in cached_results:
+                    if gateways_count > 0 and store['gateways_count'] < gateways_count:
+                        continue
+                    if cloudflare_filter and store['cloudflare'] != (cloudflare_filter.lower() == 'true'):
+                        continue
+                    if auth_filter and store['auth'] != (auth_filter.lower() == 'true'):
+                        continue
+                    if captcha_filter and store['captcha'] != (captcha_filter.lower() == 'true'):
+                        continue
+                    if vbv_filter and store['vbv'] != (vbv_filter.lower() == 'true'):
+                        continue
+                    
+                    filtered_results.append(store)
+                
+                if filtered_results:
+                    response_data = {
+                        'stores_found': len(filtered_results),
+                        'stores': filtered_results,
+                        'api_by': '@R_O_P_D',
+                        'message': 'Results retrieved from cache',
+                        'cached': True,
+                        'search_parameters': {
+                            'pages': pages,
+                            'max_results': max_results,
+                            'target_price': target_price,
+                            'gateway_type': gateway_type,
+                            'search_engines': search_engines or 'all'
+                        },
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # Send to Telegram if token and chat_id provided
+                    if bot_token and chat_id:
+                        message = f"<b>🔍 E-commerce Store Analysis Results (Cached)</b>\n\n"
+                        message += f"<b>Stores Found:</b> {len(filtered_results)}\n"
+                        message += f"<b>Target Price:</b> {target_price or 'Any'}\n"
+                        message += f"<b>Gateway Type:</b> {gateway_type or 'Any'}\n"
+                        message += f"<b>Timestamp:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        
+                        for i, store in enumerate(filtered_results[:5]):
+                            message += f"<b>Store {i+1}:</b> {store['url']}\n"
+                            message += f"<b>Gateways:</b> {', '.join(store['gateways'])}\n"
+                            message += f"<b>Prices:</b> {', '.join(store.get('prices_found', [])[:3])}\n"
+                            message += f"<b>Cloudflare:</b> {'Yes' if store['cloudflare'] else 'No'}\n"
+                            message += f"<b>Auth:</b> {'Yes' if store['auth'] else 'No'}\n"
+                            message += f"<b>Captcha:</b> {'Yes' if store['captcha'] else 'No'}\n"
+                            message += f"<b>VBV:</b> {'Yes' if store['vbv'] else 'No'}\n\n"
+                        
+                        if len(filtered_results) > 5:
+                            message += f"<i>... and {len(filtered_results) - 5} more stores</i>\n\n"
+                        
+                        message += f"<b>API by:</b> @R_O_P_D"
+                        
+                        # Send message in a separate thread to avoid blocking
+                        threading.Thread(target=send_telegram_message_sync, args=(bot_token, chat_id, message)).start()
+                    
+                    return jsonify(response_data)
         
         # Parse search engines
         engines_list = None
@@ -960,6 +1116,7 @@ def find_ecommerce_stores():
             'stores': analyzed_stores,
             'api_by': '@R_O_P_D',
             'message': 'E-commerce store search completed successfully',
+            'cached': False,
             'search_parameters': {
                 'pages': pages,
                 'max_results': max_results,
@@ -1003,6 +1160,35 @@ def find_ecommerce_stores():
             'api_by': '@R_O_P_D'
         }), 500
 
+@app.route('/search', methods=['GET'])
+def search_stores():
+    """Fast search endpoint using Whoosh index"""
+    try:
+        query = request.args.get('q', '')
+        limit = int(request.args.get('limit', 50))
+        
+        if not query:
+            return jsonify({
+                'error': 'Query parameter (q) is required',
+                'api_by': '@R_O_P_D'
+            }), 400
+        
+        results = search_manager.search_stores(query, limit)
+        
+        return jsonify({
+            'stores_found': len(results),
+            'stores': results,
+            'api_by': '@R_O_P_D',
+            'message': 'Fast search completed successfully',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Search error: {str(e)}',
+            'api_by': '@R_O_P_D'
+        }), 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -1035,6 +1221,23 @@ def list_search_engines():
         'available_engines': tool.search_engines,
         'api_by': '@R_O_P_D'
     })
+
+@app.route('/cache/stats', methods=['GET'])
+def cache_stats():
+    """Get cache statistics"""
+    try:
+        with search_manager.index.searcher() as searcher:
+            count = searcher.doc_count()
+        return jsonify({
+            'cached_stores': count,
+            'api_by': '@R_O_P_D',
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'error': f'Cache stats error: {str(e)}',
+            'api_by': '@R_O_P_D'
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
