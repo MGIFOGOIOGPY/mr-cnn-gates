@@ -927,41 +927,19 @@ def find_ecommerce_stores():
         tool = DorkSearchTool()
         all_valid_results = []
         
-        # Search with ALL queries in parallel for better results
-        print(f"🔍 Starting search with {len(ecommerce_queries)} dorks...")
-        
-        # Use threading to search all dorks simultaneously
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(ecommerce_queries))) as executor:
-            # Submit all search tasks
-            future_to_query = {
-                executor.submit(tool.search_all_engines, query, pages, engines_list): query 
-                for query in ecommerce_queries
-            }
+        # Search with multiple queries
+        for query in ecommerce_queries:
+            print(f"🔍 Searching for: {query}")
+            results = tool.search_all_engines(query, pages, engines_list)
+            valid_results = tool.filter_valid_results(results, max_results)
+            all_valid_results.extend(valid_results)
             
-            # Collect results as they complete
-            for future in concurrent.futures.as_completed(future_to_query):
-                query = future_to_query[future]
-                try:
-                    results = future.result(timeout=60)
-                    valid_results = tool.filter_valid_results(results, max_results // len(ecommerce_queries))
-                    all_valid_results.extend(valid_results)
-                    print(f"✅ Dork '{query}' found {len(valid_results)} valid results")
-                    
-                    # Early termination if we have enough results
-                    if len(all_valid_results) >= max_results * 2:
-                        print("⚡ Reached sufficient results, continuing with analysis...")
-                        break
-                        
-                except Exception as e:
-                    print(f"❌ Search failed for dork '{query}': {e}")
-                    continue
+            if len(all_valid_results) >= max_results * 3:  # Get more URLs for filtering
+                break
         
-        # Remove duplicates and limit results
+        # Remove duplicates
         all_valid_results = list(set(all_valid_results))
-        if len(all_valid_results) > max_results * 2:
-            all_valid_results = all_valid_results[:max_results * 2]
-            
-        print(f"📊 Found {len(all_valid_results)} unique URLs to analyze from all dorks")
+        print(f"📊 Found {len(all_valid_results)} unique URLs to analyze")
         
         # Analyze stores with threading
         analyzed_stores = []
@@ -986,7 +964,7 @@ def find_ecommerce_stores():
         
         # Use threading for faster analysis
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            future_to_url = {executor.submit(analyze_url, url): url for url in all_valid_results}
+            future_to_url = {executor.submit(analyze_url, url): url for url in all_valid_results[:max_results*3]}
             
             for future in concurrent.futures.as_completed(future_to_url):
                 result = future.result()
@@ -995,22 +973,18 @@ def find_ecommerce_stores():
                     if len(analyzed_stores) >= max_results:
                         break
         
-        # Sort by number of gateways found (most first)
-        analyzed_stores.sort(key=lambda x: x['gateways_count'], reverse=True)
-        
         # Prepare response
         response_data = {
             'stores_found': len(analyzed_stores),
             'stores': analyzed_stores,
             'api_by': '@R_O_P_D',
-            'message': 'E-commerce store search completed successfully using all dorks',
+            'message': 'E-commerce store search completed successfully',
             'search_parameters': {
                 'pages': pages,
                 'max_results': max_results,
                 'target_price': target_price,
                 'gateway_type': gateway_type,
-                'search_engines': engines_list or 'all',
-                'dorks_used': len(ecommerce_queries)
+                'search_engines': engines_list or 'all'
             },
             'timestamp': datetime.now().isoformat()
         }
@@ -1021,7 +995,6 @@ def find_ecommerce_stores():
             message += f"<b>Stores Found:</b> {len(analyzed_stores)}\n"
             message += f"<b>Target Price:</b> {target_price or 'Any'}\n"
             message += f"<b>Gateway Type:</b> {gateway_type or 'Any'}\n"
-            message += f"<b>Dorks Used:</b> {len(ecommerce_queries)}\n"
             message += f"<b>Timestamp:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             
             for i, store in enumerate(analyzed_stores[:5]):  # Send first 5 stores
