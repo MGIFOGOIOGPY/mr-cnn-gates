@@ -5,6 +5,7 @@ import random
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus, urlparse
+from fake_useragent import UserAgent
 from flask_cors import CORS
 import concurrent.futures
 import threading
@@ -31,9 +32,6 @@ gateways = [
 
 # Global lock for thread-safe operations
 analysis_lock = threading.Lock()
-
-# Simple in-memory cache for stores
-store_cache = {}
 
 class DorkSearchTool:
     def __init__(self):
@@ -582,7 +580,7 @@ def extract_prices(text):
         r'EUR\s*\d+\.\d{2}',  # EUR 10.99
         r'GBP\s*\d+\.\d{2}',  # GBP 10.99
         r'price:\s*\$\d+',    # Price: $10
-        r'cost:\s*\$\d+',     # Cost: $10,
+        r'cost:\s*\$\d+',     # Cost: $10
     ]
     
     prices = []
@@ -595,16 +593,8 @@ def extract_prices(text):
 def analyze_store(url, target_price=None, gateway_type=None):
     """Analyze a single store with price and gateway filtering"""
     try:
-        # Use our own user agent rotation instead of fake-useragent
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
-        ]
-        
-        headers = {'User-Agent': random.choice(user_agents)}
+        ua = UserAgent()
+        headers = {'User-Agent': ua.random}
         response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
@@ -651,7 +641,7 @@ def analyze_store(url, target_price=None, gateway_type=None):
         # Check for authentication
         is_auth = any(x in text.lower() for x in ['login', 'signin', 'register', 'account', 'my-account', 'sign up', 'password', 'username'])
         
-        store_data = {
+        return {
             'url': url,
             'real_store': True,
             'gateways': list(gateways_found),
@@ -663,26 +653,17 @@ def analyze_store(url, target_price=None, gateway_type=None):
             'vbv': vbv
         }
         
-        # Add to cache
-        store_cache[url] = store_data
-        
-        return store_data
-        
     except Exception as e:
         print(f"❌ Error analyzing {url}: {e}")
         return None
 
 def send_telegram_message_sync(bot_token, chat_id, message):
-    """Send message to Telegram bot synchronously using direct HTTP request"""
+    """Send message to Telegram bot synchronously"""
     try:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            'chat_id': chat_id,
-            'text': message,
-            'parse_mode': 'HTML'
-        }
-        response = requests.post(url, json=payload, timeout=10)
-        return response.status_code == 200
+        import telegram
+        bot = telegram.Bot(token=bot_token)
+        bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
+        return True
     except Exception as e:
         print(f"❌ Telegram error: {e}")
         return False
@@ -766,147 +747,30 @@ def find_ecommerce_stores():
         if search_engines:
             engines_list = [engine.strip().lower() for engine in search_engines.split(',')]
         
-        # Enhanced e-commerce search queries with improved dorks
+        # Comprehensive e-commerce search queries
         ecommerce_queries = [
-            # Shopify specific dorks
-            'site:myshopify.com "powered by shopify"',
-            'site:myshopify.com "powered by shopify" 2025',
-            'inurl:myshopify.com intitle:"shop" "powered by shopify"',
-            'site:myshopify.com intext:"checkout" "powered by shopify"',
-            'site:myshopify.com intext:"Buy now" "powered by shopify"',
-            
-            # Stripe specific dorks
-            'intext:"Powered by Stripe" site:myshopify.com',
-            '"Powered by Stripe" "checkout" inurl:myshopify.com',
-            'buy now inurl:myshopify.com intext:"Powered by Stripe"',
-            'intitle:checkout "Powered by Stripe"',
-            'intext:"card number" "Powered by Stripe"',
-            
-            # Donation and payment dorks
-            'intitle:donate "stripe"',
-            'intext:(usd donate) "powered by donate"',
-            'inurl:donate intext:"powered by"',
-            'intext:"donate" "Powered by Stripe"',
-            'intitle:"donate" site:myshopify.com',
-            
-            # Price specific dorks
-            '"1$" "sale" inurl:myshopify.com intext:"Powered by Shopify"',
-            '"3$" "discount offer" inurl:myshopify.com intext:"Powered by Shopify"',
-            '"4$" "sale" inurl:myshopify.com intext:"Powered by Shopify"',
-            '"0.99$" inurl:myshopify.com intext:"sale"',
-            '"$1.00" inurl:myshopify.com "discount"',
-            
-            # Payment form dorks
-            '"Pay with card" "Card Number" "Expiration Date (MM/YY)" "CVV"',
-            'intext:"Pay with card" intext:"Card Number" intext:"Expiration Date (MM/YY)" intext:"CVV"',
-            'allintext: "Pay with card" "Card Number" "Expiration Date (MM/YY)" "CVV"',
-            
-            # Product specific dorks
-            'intext:socks "powered by shopify" + "2025"',
-            'inurl:myshopify.com intext:"socks" "powered by shopify"',
-            '"socks" site:myshopify.com intitle:"shop"',
-            
-            # Checkout and payment pages
-            'site:myshopify.com intext:"Pay with card" intext:"Card Number" intext:"CVV"',
-            'site:myshopify.com inurl:checkout "Pay with card" "Expiration Date (MM/YY)"',
-            'inurl:myshopify.com intitle:checkout "Card Number" "CVV"',
-            'site:myshopify.com intext:"Pay with card" "Powered by Shopify" -blog -faq',
-            
-            # Braintree and PayPal dorks
-            'site:myshopify.com intext:"Braintree" OR "PayPal Powered by Braintree"',
-            'site:wordpress.org intext:"PayPal Powered by Braintree"',
-            'site:bigcommerce.com intext:"Braintree"',
-            '"Pay with card" "Card Number" "Expiration Date" "CVV" "Braintree"',
-            'allintext:"Pay with card" "Card Number" "Expiration Date" "CVV" "Braintree"',
-            
-            # Payment method URLs
-            'inurl:add-payment-methods',
-            'inurl:add-payment',
-            'inurl:billing',
-            'inurl:payment-method',
-            'inurl:checkout',
-            'inurl:credit-card',
-            'inurl:account/payment',
-            'inurl:update-payment',
-            
-            # Free trial and signup URLs
-            'inurl:Free-Trial',
-            'inurl:trial-signup',
-            'inurl:start-trial',
-            'inurl:register-free',
-            'inurl:get-started-free',
-            'inurl:signup-free',
-            'inurl:join-free',
-            'inurl:demo-account',
-            
-            # E-commerce action URLs
-            'inurl:checkout',
-            'inurl:cart',
-            'inurl:order',
-            'inurl:buy',
-            'inurl:purchase',
-            'inurl:payment',
-            'inurl:confirm-order',
-            'inurl:complete-order',
-            'inurl:pay',
-            'inurl:billing',
-            'inurl:checkout-step',
-            
-            # Pricing and subscription URLs
-            'inurl:pricing',
-            'inurl:plans',
-            'inurl:subscription',
-            'inurl:membership',
-            'inurl:packages',
-            'inurl:pricing-table',
-            'inurl:compare-plans',
-            'inurl:upgrade',
-            'inurl:offer',
-            'inurl:pricing-page',
-            'inurl:fees',
-            
-            # Payment gateway text indicators
-            'intext:"Powered by PayPal"',
-            'intext:"Powered by Square"',
-            'intext:"Powered by Braintree"',
-            'intext:"Powered by Shopify"',
-            'intext:"Powered by Paddle"',
-            'intext:"Powered by FastSpring"',
-            'intext:"Powered by Gumroad"',
-            'intext:"Powered by Chargebee"',
-            'intext:"Powered by Lemon Squeezy"',
-            'intext:"Powered by 2Checkout"',
-            'intext:"Payment processed by Stripe"',
-            'intext:"Secure payments via Stripe"',
-            'intext:"Checkout with Stripe"',
-            'intext:"Transactions powered by PayPal"',
-            'intext:"Accepting payments with Stripe"',
-            'intext:"Payment gateway"',
-            'intext:"PCI compliant checkout"',
-            'intext:"Pay securely with"',
-            'intext: Klarna',
-            
-            # General e-commerce queries
-            '"add to cart" "buy now"',
-            '"online store" "products"',
-            '"shop now" "free shipping"',
-            '"ecommerce" "checkout"',
-            '"buy" "price" "shopping"',
-            '"clothing store" "online shop"',
-            '"electronics" "add to cart"',
-            '"digital products" "buy now"',
-            '"jewelry" "online store"',
-            '"home decor" "shop online"',
-            '"beauty products" "buy"',
-            '"sports equipment" "online store"',
-            '"books" "online bookstore"',
-            '"toys" "shop online"',
-            '"food" "online delivery"',
-            '"add to cart button" "checkout"',
-            '"proceed to checkout" "shopping cart"',
-            '"place order" "payment method"',
-            '"credit card" "secure checkout"',
-            '"buy now button" "add to basket"'
+            "inurl:checkout",
+            "inurl:cart", 
+            "inurl:order",
+            "inurl:buy",
+            "inurl:purchase",
+            "inurl:payment",
+            "inurl:confirm-order",
+            "inurl:complete-order",
+            "inurl:pay",
+            "inurl:billing",
+            "inurl:checkout-step",
+            "inurl:pricing",
+            "inurl:plans",
+            "inurl:subscription",
+            "inurl:membership",
+            "inurl:packages",
+            "inurl:pricing-table",
+            "inurl:compare-plans",
+            "inurl:upgrade",
+            "inurl:offer",
+            "inurl:pricing-page",
+            "inurl:fees"
         ]
         
         # Add custom query if provided
@@ -1021,53 +885,6 @@ def find_ecommerce_stores():
             'error': f'Unexpected error: {str(e)}',
             'api_by': '@R_O_P_D'
         }), 500
-
-@app.route('/search', methods=['GET'])
-def search_cached_stores():
-    """Search in cached stores"""
-    try:
-        query = request.args.get('q', '')
-        limit = int(request.args.get('limit', 20))
-        
-        if not query:
-            return jsonify({
-                'error': 'Query parameter (q) is required',
-                'api_by': '@R_O_P_D'
-            }), 400
-        
-        results = []
-        query_lower = query.lower()
-        
-        for store in store_cache.values():
-            # Search in gateways and prices
-            content = f"{' '.join(store.get('gateways', []))} {' '.join(store.get('prices_found', []))}".lower()
-            if query_lower in content:
-                results.append(store)
-                if len(results) >= limit:
-                    break
-        
-        return jsonify({
-            'stores_found': len(results),
-            'stores': results,
-            'api_by': '@R_O_P_D',
-            'message': 'Search completed successfully',
-            'timestamp': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'error': f'Search error: {str(e)}',
-            'api_by': '@R_O_P_D'
-        }), 500
-
-@app.route('/cache/stats', methods=['GET'])
-def cache_stats():
-    """Get cache statistics"""
-    return jsonify({
-        'cached_stores': len(store_cache),
-        'api_by': '@R_O_P_D',
-        'timestamp': datetime.now().isoformat()
-    })
 
 @app.route('/health', methods=['GET'])
 def health_check():
